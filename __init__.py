@@ -4,7 +4,7 @@ bl_info = {
     "name": "Edit Manager",
     "description": "Tools to help editing scene in sequencer",
     "author": "Samuel Bernou",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (3, 3, 0),
     "location": "",
     "warning": "",
@@ -188,7 +188,7 @@ def get_scene_frame_from_sequencer_frame(scn_strip, frame) -> float:
     """return frame in scene referential"""
     return frame - scn_strip.frame_start + scn_strip.scene.frame_start
 
-def get_all_overlapping_sound_strip(scn_strip, skip_mute=True):
+def get_all_overlapping_sound_strip(scn_strip, skip_mute=True, skip_unselected=True):
     if scn_strip.type != 'SCENE':
         return
 
@@ -200,6 +200,9 @@ def get_all_overlapping_sound_strip(scn_strip, skip_mute=True):
             continue
         if skip_mute and s.mute:
             continue
+        if skip_unselected and not s.select:
+            continue
+
         if (s.frame_final_end <  scn_strip.frame_final_start)\
             or (s.frame_final_start > scn_strip.frame_final_end):
             continue
@@ -213,12 +216,12 @@ def get_all_overlapping_sound_strip(scn_strip, skip_mute=True):
     return overlapping_sounds
 
 
-def send_sound_to_strip_scene(scn_strip, clear_sequencer=True, skip_mute=True):
+def send_sound_to_strip_scene(scn_strip, clear_sequencer=True, skip_mute=True, skip_unselected=True):
     if scn_strip.type != 'SCENE':
         return
     tgt_scene = scn_strip.scene
 
-    sounds = get_all_overlapping_sound_strip(scn_strip, skip_mute=skip_mute)
+    sounds = get_all_overlapping_sound_strip(scn_strip, skip_mute=skip_mute, skip_unselected=skip_unselected)
     if not sounds:
         print(f'! No sound to send to scene {tgt_scene.name}')
         return
@@ -239,7 +242,7 @@ def send_sound_to_strip_scene(scn_strip, clear_sequencer=True, skip_mute=True):
     return sounds
 
 
-def dispatch_sounds_in_scenes(skip_mute=True):
+def dispatch_sounds_in_scenes(selected_scn_only=True, skip_mute=True, skip_unselected=True):
     edit_scene = bpy.context.scene
     edit = edit_scene.sequence_editor
 
@@ -252,10 +255,10 @@ def dispatch_sounds_in_scenes(skip_mute=True):
             print(f'"{strip.scene.name}" has edit in name, skip')
             continue
 
-        if not strip.select:
+        if selected_scn_only and not strip.select:
             continue
 
-        sounds = send_sound_to_strip_scene(strip, skip_mute=skip_mute)
+        sounds = send_sound_to_strip_scene(strip, skip_mute=skip_mute,  skip_unselected=skip_unselected)
         if sounds:
             ct += 1
 
@@ -267,16 +270,46 @@ def dispatch_sounds_in_scenes(skip_mute=True):
 
 class EDIT_OT_duplicate_sound_in_strip_scene(Operator):
     bl_idname = "edit.duplicate_sound_in_strip_scene"
-    bl_label = "Sounds To Selected Scenes"
-    bl_description = "Send sounds to selected scene strip"
+    bl_label = "Sounds To Scenes"
+    bl_description = "Send sounds to scene in strips\
+        \nCtrl + Click to use default"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         return context.scene and context.scene.name == 'EDIT'
 
+    selected_scn_only : bpy.props.BoolProperty(name='Selected Scene Only', 
+        default=True,
+        description='Selected Scene only')
+    skip_sound_mute : bpy.props.BoolProperty(name='Ignore Muted Sound', 
+        default=True,
+        description='Skip muted sound')
+    skip_sound_unselected : bpy.props.BoolProperty(name='Ignore Unselected Sound', 
+        default=True,
+        description='Skip unselected sound')
+
+
+    def invoke(self, context, event):
+        if event.ctrl:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self) # width=
+    
+    def draw(self, context):
+        layout = self.layout
+        col=layout.column()
+        col.prop(self, 'selected_scn_only')
+        col.separator()
+        col.label(text='Sounds')
+        col.prop(self, 'skip_sound_mute')
+        col.prop(self, 'skip_sound_unselected')
+
     def execute(self, context):
-        dispatch_sounds_in_scenes(skip_mute=True)
+        dispatch_sounds_in_scenes(
+            selected_scn_only=self.selected_scn_only,
+            skip_mute=self.skip_sound_mute,
+            skip_unselected=self.skip_sound_unselected)
+
         # send_sound_to_strip_scene(edit.active_strip)
         return {'FINISHED'}        
 
@@ -303,9 +336,6 @@ addon_keymaps = []
 def register_keymaps():
     if bpy.app.background:
         return
-    # pref = get_addon_prefs()
-    # if not pref.breakdowner_use_shortcut:
-    #     return
 
     addon = bpy.context.window_manager.keyconfigs.addon
     km = addon.keymaps.new(name = "Window", space_type = "EMPTY")
